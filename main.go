@@ -149,14 +149,21 @@ func callOllama(req Request) (interface{}, error) {
 		"messages": req.Messages,
 		"stream":   req.Stream,
 	}
-	if req.ResponseType == "json" {
-		body["format"] = "json"
+	if req.ResponseType == "json" && len(req.ResponseSchema) > 0 {
+		body["format"] = req.ResponseSchema
+		body["stream"] = false
 	}
 	if len(req.Tools) > 0 {
 		body["tools"] = req.Tools
 	}
 
-	return makeRequest(url, req.APIKey, body, req.ResponseType)
+	// print body
+	log.WithFields(logrus.Fields{
+		"url":  url,
+		"body": body,
+	}).Info("Making request to Ollama")
+
+	return makeRequest(url, req.APIKey, body)
 }
 
 func callOpenAI(req Request) (interface{}, error) {
@@ -176,13 +183,13 @@ func callOpenAI(req Request) (interface{}, error) {
 		body["tools"] = req.Tools
 	}
 
-	return makeRequest(url, req.APIKey, body, req.ResponseType)
+	return makeRequest(url, req.APIKey, body)
 }
 
 func callGemini(req Request) (interface{}, error) {
 	url := req.CustomURL
 	if url == "" {
-		url = fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent", req.ModelID)
+		url = fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", req.ModelID, req.APIKey)
 	}
 	contents := []map[string]interface{}{}
 	for _, msg := range req.Messages {
@@ -204,7 +211,23 @@ func callGemini(req Request) (interface{}, error) {
 		body["tools"] = req.Tools
 	}
 
-	return makeRequest(url, req.APIKey, body, req.ResponseType)
+	if req.ResponseType == "json" {
+		body["generationConfig"] = map[string]interface{}{
+			"responseMimeType": "text/plain",
+		}
+	} else if req.ResponseType == "json" {
+		body["generationConfig"] = map[string]interface{}{
+			"responseMimeType": "application/json",
+			"responseSchema":   req.ResponseSchema,
+		}
+	}
+	// log everything
+	log.WithFields(logrus.Fields{
+		"url":  url,
+		"body": body,
+	}).Info("Making request to Gemini")
+	// return makeRequest(url, req.APIKey, body)
+	return nil, nil
 }
 
 func callGrok(req Request) (interface{}, error) {
@@ -221,12 +244,11 @@ func callGrok(req Request) (interface{}, error) {
 		body["tools"] = req.Tools
 	}
 
-	return makeRequest(url, req.APIKey, body, req.ResponseType)
+	return makeRequest(url, req.APIKey, body)
 }
-func makeRequest(urlStr, apiKey string, body interface{}, responseType string) (interface{}, error) {
+func makeRequest(urlStr, apiKey string, body interface{}) (interface{}, error) {
 	logEntry := log.WithFields(logrus.Fields{
-		"url":           urlStr,
-		"response_type": responseType,
+		"url": urlStr,
 	})
 
 	jsonBody, err := json.Marshal(body)
