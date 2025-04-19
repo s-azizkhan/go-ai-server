@@ -25,19 +25,19 @@ type Request struct {
 	ResponseType   string          `json:"response_type" binding:"oneof=text json"`
 	ResponseSchema json.RawMessage `json:"response_schema"`
 	CustomURL      string          `json:"custom_url"`
-	Tools          []interface{}   `json:"tools"`
+	Tools          []any           `json:"tools"`
 	Stream         bool            `json:"stream"`
 }
 
 type Message struct {
-	Role      string        `json:"role" binding:"required,oneof=system user assistant"`
-	Content   string        `json:"content" binding:"required"`
-	ToolCalls []interface{} `json:"tool_calls"`
+	Role      string `json:"role" binding:"required,oneof=system user assistant"`
+	Content   string `json:"content" binding:"required"`
+	ToolCalls []any  `json:"tool_calls"`
 }
 
 type Response struct {
-	Data  interface{} `json:"data"`
-	Error string      `json:"error,omitempty"`
+	Data  any    `json:"data"`
+	Error string `json:"error,omitempty"`
 }
 
 type ErrorResponse struct {
@@ -114,7 +114,7 @@ func handleGenerate(c *gin.Context) {
 		}
 	}
 
-	var respData interface{}
+	var respData any
 	var err error
 
 	switch strings.ToLower(req.Provider) {
@@ -139,12 +139,12 @@ func handleGenerate(c *gin.Context) {
 	c.JSON(http.StatusOK, Response{Data: respData})
 }
 
-func callOllama(req Request) (interface{}, error) {
+func callOllama(req Request) (any, error) {
 	url := req.CustomURL
 	if url == "" {
-		url = "http://localhost:11434/api/chat"
+		url = "http://127.0.0.1:11434/api/chat"
 	}
-	body := map[string]interface{}{
+	body := map[string]any{
 		"model":    req.ModelID,
 		"messages": req.Messages,
 		"stream":   req.Stream,
@@ -157,27 +157,21 @@ func callOllama(req Request) (interface{}, error) {
 		body["tools"] = req.Tools
 	}
 
-	// print body
-	log.WithFields(logrus.Fields{
-		"url":  url,
-		"body": body,
-	}).Info("Making request to Ollama")
-
 	return makeRequest(url, req.APIKey, body)
 }
 
-func callOpenAI(req Request) (interface{}, error) {
+func callOpenAI(req Request) (any, error) {
 	url := req.CustomURL
 	if url == "" {
 		url = "https://api.openai.com/v1/chat/completions"
 	}
-	body := map[string]interface{}{
+	body := map[string]any{
 		"model":    req.ModelID,
 		"messages": req.Messages,
 		"stream":   req.Stream,
 	}
 	if req.ResponseType == "json" && len(req.ResponseSchema) > 0 {
-		body["response_format"] = map[string]interface{}{"type": "json_object"}
+		body["response_format"] = map[string]any{"type": "json_object"}
 	}
 	if len(req.Tools) > 0 {
 		body["tools"] = req.Tools
@@ -186,25 +180,25 @@ func callOpenAI(req Request) (interface{}, error) {
 	return makeRequest(url, req.APIKey, body)
 }
 
-func callGemini(req Request) (interface{}, error) {
+func callGemini(req Request) (any, error) {
 	url := req.CustomURL
 	if url == "" {
 		url = fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", req.ModelID, req.APIKey)
 	}
-	contents := []map[string]interface{}{}
+	contents := []map[string]any{}
 	for _, msg := range req.Messages {
 		role := msg.Role
 		if role == "system" {
 			role = "user" // Gemini doesn't support system role
 		}
-		contents = append(contents, map[string]interface{}{
+		contents = append(contents, map[string]any{
 			"role": role,
 			"parts": []map[string]string{
 				{"text": msg.Content},
 			},
 		})
 	}
-	body := map[string]interface{}{
+	body := map[string]any{
 		"contents": contents,
 	}
 	if len(req.Tools) > 0 {
@@ -212,11 +206,11 @@ func callGemini(req Request) (interface{}, error) {
 	}
 
 	if req.ResponseType == "json" {
-		body["generationConfig"] = map[string]interface{}{
+		body["generationConfig"] = map[string]any{
 			"responseMimeType": "text/plain",
 		}
 	} else if req.ResponseType == "json" {
-		body["generationConfig"] = map[string]interface{}{
+		body["generationConfig"] = map[string]any{
 			"responseMimeType": "application/json",
 			"responseSchema":   req.ResponseSchema,
 		}
@@ -230,12 +224,12 @@ func callGemini(req Request) (interface{}, error) {
 	return nil, nil
 }
 
-func callGrok(req Request) (interface{}, error) {
+func callGrok(req Request) (any, error) {
 	url := req.CustomURL
 	if url == "" {
 		url = "https://api.x.ai/v1/grok"
 	}
-	body := map[string]interface{}{
+	body := map[string]any{
 		"model":    req.ModelID,
 		"messages": req.Messages,
 		"stream":   req.Stream,
@@ -246,7 +240,7 @@ func callGrok(req Request) (interface{}, error) {
 
 	return makeRequest(url, req.APIKey, body)
 }
-func makeRequest(urlStr, apiKey string, body interface{}) (interface{}, error) {
+func makeRequest(urlStr, apiKey string, body any) (any, error) {
 	logEntry := log.WithFields(logrus.Fields{
 		"url": urlStr,
 	})
@@ -297,7 +291,7 @@ func makeRequest(urlStr, apiKey string, body interface{}) (interface{}, error) {
 		return nil, &APIError{Message: fmt.Sprintf("failed to read response: %v", err)}
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		logEntry.WithError(err).Error("Failed to parse JSON response")
 		return nil, &APIError{Message: fmt.Sprintf("failed to parse JSON response: %v", err)}
