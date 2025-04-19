@@ -15,8 +15,6 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-var log = logrus.New()
-
 type Request struct {
 	Provider       string          `json:"provider" binding:"required,oneof=ollama openai gemini grok"`
 	APIKey         string          `json:"api_key" binding:"required"`
@@ -50,10 +48,11 @@ type APIError struct {
 }
 
 func (e *APIError) Error() string {
-	return fmt.Sprintf("API error: %s (status: %d)", e.Message, e.StatusCode)
+	return fmt.Sprintf(`{"error": %s, "status_code": %d}`, e.Message, e.StatusCode)
 }
 
 var validate *validator.Validate
+var log = logrus.New()
 
 func init() {
 	validate = validator.New()
@@ -64,7 +63,7 @@ func init() {
 func main() {
 	r := gin.Default()
 	r.Use(errorHandler())
-	r.POST("/api/chat", handleGenerate)
+	r.POST("/api/chat", handleChat)
 	if err := r.Run(":4040"); err != nil {
 		panic(fmt.Sprintf("Failed to start server: %v", err))
 	}
@@ -79,7 +78,7 @@ func errorHandler() gin.HandlerFunc {
 	}
 }
 
-func handleGenerate(c *gin.Context) {
+func handleChat(c *gin.Context) {
 	var req Request
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, ErrorResponse{Error: "Invalid request body: " + err.Error()})
@@ -157,7 +156,7 @@ func callOllama(req Request) (any, error) {
 		body["tools"] = req.Tools
 	}
 
-	return makeRequest(url, req.APIKey, body)
+	return makeRequest(url, req.APIKey, body, req.Provider)
 }
 
 func callOpenAI(req Request) (any, error) {
@@ -177,7 +176,7 @@ func callOpenAI(req Request) (any, error) {
 		body["tools"] = req.Tools
 	}
 
-	return makeRequest(url, req.APIKey, body)
+	return makeRequest(url, req.APIKey, body, req.Provider)
 }
 
 func callGemini(req Request) (any, error) {
@@ -185,11 +184,19 @@ func callGemini(req Request) (any, error) {
 	if url == "" {
 		url = fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", req.ModelID, req.APIKey)
 	}
+
+	systemInstruction := map[string]any{
+		"parts": []map[string]string{},
+	}
 	contents := []map[string]any{}
 	for _, msg := range req.Messages {
 		role := msg.Role
 		if role == "system" {
-			role = "user" // Gemini doesn't support system role
+			// Gemini doesn't support system role
+			systemInstruction["parts"] = []map[string]string{
+				{"text": msg.Content},
+			}
+			continue
 		}
 		contents = append(contents, map[string]any{
 			"role": role,
@@ -201,11 +208,15 @@ func callGemini(req Request) (any, error) {
 	body := map[string]any{
 		"contents": contents,
 	}
+
+	if systemInstruction["parts"] != nil {
+		body["systemInstruction"] = systemInstruction
+	}
 	if len(req.Tools) > 0 {
 		body["tools"] = req.Tools
 	}
 
-	if req.ResponseType == "json" {
+	if req.ResponseType == "text" {
 		body["generationConfig"] = map[string]any{
 			"responseMimeType": "text/plain",
 		}
@@ -215,13 +226,8 @@ func callGemini(req Request) (any, error) {
 			"responseSchema":   req.ResponseSchema,
 		}
 	}
-	// log everything
-	log.WithFields(logrus.Fields{
-		"url":  url,
-		"body": body,
-	}).Info("Making request to Gemini")
-	// return makeRequest(url, req.APIKey, body)
-	return nil, nil
+
+	return makeRequest(url, req.APIKey, body, req.Provider)
 }
 
 func callGrok(req Request) (any, error) {
@@ -238,9 +244,10 @@ func callGrok(req Request) (any, error) {
 		body["tools"] = req.Tools
 	}
 
-	return makeRequest(url, req.APIKey, body)
+	return makeRequest(url, req.APIKey, body, req.Provider)
 }
-func makeRequest(urlStr, apiKey string, body any) (any, error) {
+
+func makeRequest(urlStr string, apiKey string, body any, provider string) (any, error) {
 	logEntry := log.WithFields(logrus.Fields{
 		"url": urlStr,
 	})
@@ -261,7 +268,9 @@ func makeRequest(urlStr, apiKey string, body any) (any, error) {
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
+	if provider != "gemini" { // BCOZ: Gemini uses API key in url
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
 	req.Header.Set("Accept", "application/json")
 
 	logEntry.Info("Sending request to provider")
