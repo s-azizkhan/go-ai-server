@@ -63,6 +63,7 @@ func init() {
 func main() {
 	r := gin.Default()
 	r.Use(errorHandler())
+	r.GET("/healthz", handleHealthCheck) 
 	r.POST("/api/chat", handleChat)
 	if err := r.Run(":4040"); err != nil {
 		panic(fmt.Sprintf("Failed to start server: %v", err))
@@ -78,6 +79,12 @@ func errorHandler() gin.HandlerFunc {
 	}
 }
 
+func handleHealthCheck(c *gin.Context) {
+    c.JSON(http.StatusOK, gin.H{
+        "status": "ok",
+        "timestamp": time.Now().Format(time.RFC3339),
+    })
+}
 func handleChat(c *gin.Context) {
 	var req Request
 	if err := c.ShouldBindJSON(&req); err != nil {
