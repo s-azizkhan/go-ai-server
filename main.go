@@ -7,11 +7,14 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
+	"github.com/joho/godotenv"
 	"github.com/sirupsen/logrus"
 )
 
@@ -172,12 +175,25 @@ func init() {
 }
 
 func main() {
+	// load env vars
+	// Load environment variables
+	err := godotenv.Load()
+	if err != nil {
+		log.Print("Error loading .env file")
+	}
 	// gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 	r.Use(errorHandler())
 	r.GET("/healthz", handleHealthCheck)
 	r.POST("/api/chat", handleChat)
-	if err := r.Run(":4040"); err != nil {
+
+	port, err := strconv.Atoi(os.Getenv("PORT"))
+	if err != nil || port == 0 {
+		port = 3000 // Use default port if no valid port is set
+	}
+
+	if err := r.Run(fmt.Sprintf(":%d", port)); err != nil {
+		log.Printf("Failed to start server: %v", err)
 		panic(fmt.Sprintf("Failed to start server: %v", err))
 	}
 }
