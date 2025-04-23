@@ -42,9 +42,110 @@ type ErrorResponse struct {
 	Error            string `json:"error"`
 	ProviderResponse string `json:"provider_response"`
 }
+
 type APIError struct {
 	Message    string `json:"message"`
 	StatusCode int    `json:"status_code,omitempty"`
+}
+
+// Gemini Response Structures (as defined previously)
+type GeminiResponse struct {
+	Candidates []struct {
+		AvgLogprobs float64 `json:"avgLogprobs"`
+		Content     struct {
+			Parts []struct {
+				Text string `json:"text"`
+			} `json:"parts"`
+			Role string `json:"role"`
+		} `json:"content"`
+		FinishReason string `json:"finishReason"`
+	} `json:"candidates"`
+	ModelVersion  string `json:"modelVersion"`
+	UsageMetadata struct {
+		CandidatesTokenCount    int `json:"candidatesTokenCount"`
+		CandidatesTokensDetails []struct {
+			Modality   string `json:"modality"`
+			TokenCount int    `json:"tokenCount"`
+		} `json:"candidatesTokensDetails"`
+		PromptTokenCount    int `json:"promptTokenCount"`
+		PromptTokensDetails []struct {
+			Modality   string `json:"modality"`
+			TokenCount int    `json:"tokenCount"`
+		} `json:"promptTokensDetails"`
+		TotalTokenCount int `json:"totalTokenCount"`
+	} `json:"usageMetadata"`
+}
+
+// Ollama Response Structure (as defined previously)
+type OllamaResponse struct {
+	CreatedAt          string    `json:"created_at"`
+	Done               bool      `json:"done"`
+	DoneReason         string    `json:"done_reason"`
+	EvalCount          int       `json:"eval_count"`
+	EvalDuration       int64     `json:"eval_duration"`
+	LoadDuration       int64     `json:"load_duration"`
+	Message            AIMessage `json:"message"`
+	Model              string    `json:"model"`
+	PromptEvalCount    int       `json:"prompt_eval_count"`
+	PromptEvalDuration int64     `json:"prompt_eval_duration"`
+	TotalDuration      int64     `json:"total_duration"`
+}
+
+type AIResponse struct {
+	CreatedAt          string    `json:"created_at"`
+	Done               bool      `json:"done"`
+	DoneReason         string    `json:"done_reason"`
+	EvalCount          int       `json:"eval_count"`
+	EvalDuration       int64     `json:"eval_duration"`
+	LoadDuration       int64     `json:"load_duration"`
+	Message            AIMessage `json:"message"`
+	Model              string    `json:"model"`
+	PromptEvalCount    int       `json:"prompt_eval_count"`
+	PromptEvalDuration int64     `json:"prompt_eval_duration"`
+	TotalDuration      int64     `json:"total_duration"`
+}
+
+type AIMessage struct {
+	Content string `json:"content"`
+	Role    string `json:"role"`
+}
+
+// Function to convert Gemini response to Ollama response (best-effort)
+func ParseGeminiResponse(geminiJSON any) (any, error) {
+	var inputResp GeminiResponse
+	if err := json.Unmarshal(geminiJSON.([]byte), &inputResp); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal Gemini response: %w", err)
+	}
+
+	if len(inputResp.Candidates) == 0 || len(inputResp.Candidates[0].Content.Parts) == 0 {
+		return nil, fmt.Errorf("Gemini response does not contain valid content")
+	}
+
+	// Create output response
+	outputResp := AIResponse{
+		CreatedAt:       time.Now().UTC().Format(time.RFC3339Nano),
+		Done:            true,
+		Model:           inputResp.ModelVersion, // Hardcoded as per desired output
+		DoneReason:      inputResp.Candidates[0].FinishReason,
+		EvalCount:       inputResp.UsageMetadata.CandidatesTokenCount,
+		PromptEvalCount: inputResp.UsageMetadata.PromptTokenCount,
+		// Assuming reasonable defaults for durations since input doesn't provide them
+		EvalDuration:       0, // nanoseconds
+		LoadDuration:       0, // nanoseconds
+		PromptEvalDuration: 0, // nanoseconds
+		TotalDuration:      0, // nanoseconds
+		Message: AIMessage{
+			Content: inputResp.Candidates[0].Content.Parts[0].Text,
+			Role:    "assistant",
+		},
+	}
+
+	aiResp, err := json.Marshal(outputResp)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal Ollama response: %w", err)
+	}
+
+	return aiResp, nil
 }
 
 func (e *APIError) Error() string {
@@ -61,9 +162,10 @@ func init() {
 }
 
 func main() {
+	// gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 	r.Use(errorHandler())
-	r.GET("/healthz", handleHealthCheck) 
+	r.GET("/healthz", handleHealthCheck)
 	r.POST("/api/chat", handleChat)
 	if err := r.Run(":4040"); err != nil {
 		panic(fmt.Sprintf("Failed to start server: %v", err))
@@ -80,11 +182,12 @@ func errorHandler() gin.HandlerFunc {
 }
 
 func handleHealthCheck(c *gin.Context) {
-    c.JSON(http.StatusOK, gin.H{
-        "status": "ok",
-        "timestamp": time.Now().Format(time.RFC3339),
-    })
+	c.JSON(http.StatusOK, gin.H{
+		"status":    "ok",
+		"timestamp": time.Now().Format(time.RFC3339),
+	})
 }
+
 func handleChat(c *gin.Context) {
 	var req Request
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -129,7 +232,21 @@ func handleChat(c *gin.Context) {
 	case "openai":
 		respData, err = callOpenAI(req)
 	case "gemini":
-		respData, err = callGemini(req)
+		var geminiRespData any
+		geminiRespData, err = callGemini(req)
+		// print the data type of geminiRespData
+		fmt.Printf("Data type of geminiRespData: %T\n", geminiRespData)
+		var ollamaResp any
+		ollamaResp, err = ParseGeminiResponse(geminiRespData)
+		if err != nil {
+			log.Fatalf("failed to convert Gemini response: %d", err)
+			// c.AbortWithStatusJSON(http.StatusBadRequest, ErrorResponse{Error: "failed to convert Gemini response"})
+			// return
+			respData = geminiRespData
+		} else {
+			respData = ollamaResp
+		}
+
 	case "grok":
 		respData, err = callGrok(req)
 	default:
@@ -143,6 +260,7 @@ func handleChat(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, Response{Data: respData})
+	return
 }
 
 func callOllama(req Request) (any, error) {
@@ -192,18 +310,45 @@ func callGemini(req Request) (any, error) {
 		url = fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", req.ModelID, req.APIKey)
 	}
 
-	systemInstruction := map[string]any{
-		"parts": []map[string]string{},
+	body := map[string]any{
+		"contents": buildGeminiContents(req.Messages),
 	}
-	contents := []map[string]any{}
-	for _, msg := range req.Messages {
-		role := msg.Role
-		if role == "system" {
-			// Gemini doesn't support system role
-			systemInstruction["parts"] = []map[string]string{
-				{"text": msg.Content},
-			}
+
+	// Add system instruction if present
+	if systemParts, exists := extractGeminiSystemInstruction(req.Messages); exists {
+		body["systemInstruction"] = map[string]any{
+			"parts": systemParts,
+		}
+	}
+
+	// Add tools if provided
+	if len(req.Tools) > 0 {
+		body["tools"] = req.Tools
+	}
+
+	// Configure response type
+	if req.ResponseType != "" {
+		config := map[string]any{"responseMimeType": "text/plain"}
+		if req.ResponseType == "json" {
+			config["responseMimeType"] = "application/json"
+			config["responseSchema"] = req.ResponseSchema
+		}
+		body["generationConfig"] = config
+	}
+
+	return makeRequest(url, req.APIKey, body, req.Provider)
+}
+
+// buildContents constructs the contents array, excluding system messages
+func buildGeminiContents(messages []Message) []map[string]any {
+	contents := make([]map[string]any, 0, len(messages))
+	for _, msg := range messages {
+		if msg.Role == "system" {
 			continue
+		}
+		role := msg.Role
+		if role == "assistant" {
+			role = "model"
 		}
 		contents = append(contents, map[string]any{
 			"role": role,
@@ -212,29 +357,17 @@ func callGemini(req Request) (any, error) {
 			},
 		})
 	}
-	body := map[string]any{
-		"contents": contents,
-	}
+	return contents
+}
 
-	if systemInstruction["parts"] != nil {
-		body["systemInstruction"] = systemInstruction
-	}
-	if len(req.Tools) > 0 {
-		body["tools"] = req.Tools
-	}
-
-	if req.ResponseType == "text" {
-		body["generationConfig"] = map[string]any{
-			"responseMimeType": "text/plain",
-		}
-	} else if req.ResponseType == "json" {
-		body["generationConfig"] = map[string]any{
-			"responseMimeType": "application/json",
-			"responseSchema":   req.ResponseSchema,
+// extractSystemInstruction extracts system message parts if present
+func extractGeminiSystemInstruction(messages []Message) ([]map[string]string, bool) {
+	for _, msg := range messages {
+		if msg.Role == "system" {
+			return []map[string]string{{"text": msg.Content}}, true
 		}
 	}
-
-	return makeRequest(url, req.APIKey, body, req.Provider)
+	return nil, false
 }
 
 func callGrok(req Request) (any, error) {
