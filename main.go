@@ -110,10 +110,14 @@ type AIMessage struct {
 	Role    string `json:"role"`
 }
 
-// Function to convert Gemini response to Ollama response (best-effort)
+// ParseGeminiResponse converts Gemini response to standardized AI response format
 func ParseGeminiResponse(geminiJSON any) (any, error) {
 	var inputResp GeminiResponse
-	if err := json.Unmarshal(geminiJSON.([]byte), &inputResp); err != nil {
+	jsonBytes, err := json.Marshal(geminiJSON)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal Gemini response to JSON: %w", err)
+	}
+	if unmarshalErr := json.Unmarshal(jsonBytes, &inputResp); unmarshalErr != nil {
 		return nil, fmt.Errorf("failed to unmarshal Gemini response: %w", err)
 	}
 
@@ -145,7 +149,13 @@ func ParseGeminiResponse(geminiJSON any) (any, error) {
 		return nil, fmt.Errorf("failed to marshal Ollama response: %w", err)
 	}
 
-	return aiResp, nil
+	// convert bytes to interface
+	var aiRespMap map[string]any
+	if err := json.Unmarshal(aiResp, &aiRespMap); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal AI response: %w", err)
+	}
+
+	return aiRespMap, nil
 }
 
 func (e *APIError) Error() string {
@@ -240,7 +250,7 @@ func handleChat(c *gin.Context) {
 		ollamaResp, err = ParseGeminiResponse(geminiRespData)
 		if err != nil {
 			log.Fatalf("failed to convert Gemini response: %d", err)
-			// c.AbortWithStatusJSON(http.StatusBadRequest, ErrorResponse{Error: "failed to convert Gemini response"})
+			// c.AbortWithStatusJSON(http.StatusBadRequest,j ErrorResponse{Error: "failed to convert Gemini response"})
 			// return
 			respData = geminiRespData
 		} else {
