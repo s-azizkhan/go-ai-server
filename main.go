@@ -183,7 +183,23 @@ func main() {
 	}
 	// gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
+
+	// Enable CORS for all origins
+	r.Use(func(c *gin.Context) {
+		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Origin, Authorization, Content-Type")
+
+		if c.Request.Method == "OPTIONS" || c.Request.Method == "PUT" || c.Request.Method == "PATCH" || c.Request.Method == "DELETE" {
+			c.AbortWithStatus(204)
+			return
+		}
+
+		c.Next()
+	})
+
 	r.Use(errorHandler())
+	r.GET("/kaithhealthcheck", handleHealthCheck)
 	r.GET("/healthz", handleHealthCheck)
 	r.POST("/api/chat", handleChat)
 
